@@ -2,7 +2,7 @@ import type { EngineInterface, Hook, MatchedHook } from 'claude-code'
 
 import type { Risk } from './guard'
 import type { Discard } from './guard'
-import { commandDir, dataResets, deleteSites, discards, expandedHeredoc, forcePushes, hostPath, isAbsolute, isDefaultBranch, isProse, misEscapedCjk, quotesUser, resolvePath, rootLike, scriptNamesModel, shellRisks, writtenFile } from './guard'
+import { cleanPreview, commandDir, dataResets, deleteSites, discards, expandedHeredoc, forcePushes, hostPath, isAbsolute, isDefaultBranch, isProse, misEscapedCjk, quotesUser, resolvePath, rootLike, scriptNamesModel, shellRisks, writtenFile } from './guard'
 import { encodingNote, encodingOf } from './encoding'
 import { EDITS, asEditLog, prune, recentEdit, remember } from './edits'
 import { commandHead } from './background'
@@ -107,8 +107,7 @@ async function lostFiles($: EngineInterface, command: string, discard: Discard):
     discard.verb === 'reset'
       ? ['status', '--porcelain', '--untracked-files=no']
       : discard.verb === 'clean'
-        ? // -n last, so a --no-dry-run among the arguments cannot turn the preview into the delete.
-          ['clean', ...discard.args.map(f => f.replace(/^--force$/, '').replace(/^(-\w*?)f/, '$1')).filter(f => f !== '' && f !== '-'), '-n']
+        ? cleanPreview(discard.args)
         : ['diff', '--name-only', '--', ...discard.args]
   const run = await $.process.run(['git', '-C', dir, ...argv], { timeoutMs: 5_000 }).catch(() => undefined)
   if (run?.exitCode !== 0) return []
