@@ -11,6 +11,7 @@ All notable changes to this project are documented here. The format follows [Kee
 ### Fixed
 
 - In a session with rows under a speaker label (a teammate's message, a task notification, a stop hook's or an away summary), tessera stopped drawing tool rows and folding diffs: such a row reports itself expanded whenever its body fits, and tessera took that for the ctrl+o transcript. Only the person's own prompts tell the view now.
+- The tree guard's preview of a `git clean` could delete what it meant to list. It dropped one `f` of `-ff` and the pattern after `-e`, so `git clean -ffdx -e .env` was previewed as `git clean -fdx -e -n`: git read `-n` as the pattern and removed every untracked and ignored file, `.env` included, before the reminder showed. The preview now keeps only the options that narrow or describe a clean (`-d`, `-x`, `-X`, `-q`, `-e <pattern>`, `--exclude`), drops every spelling of force and interactive, and runs with `clean.requireForce` pinned on, so git refuses rather than deletes if an option is read wrong.
 
 ## [0.8.4] - 2026-10-11
 

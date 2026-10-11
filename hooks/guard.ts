@@ -116,9 +116,41 @@ export function discards(command: string): Discard[] {
     }
     if (verb === 'restore' && (!words.some(w => /^(-S|--staged)$/.test(w)) || words.some(w => /^(-W|--worktree)$/.test(w))))
       found.push({ verb, args: words.filter(w => !w.startsWith('-')) })
-    if (verb === 'clean' && words.some(w => /^(-\w*f\w*|--force)$/.test(w))) found.push({ verb, args: words.filter(w => w.startsWith('-')) })
+    // Every word, not only the dashed ones: -e takes the next word as its pattern.
+    if (verb === 'clean' && words.some(w => /^(-\w*f\w*|--force)$/.test(w))) found.push({ verb, args: words })
   }
   return found
+}
+
+// The options of git clean that only narrow or describe a run. The preview keeps these and drops every
+// other word, so no spelling of force (-ff, -fdf, --forc) or of interactive reaches it.
+const CLEAN_FLAGS = new Set(['d', 'x', 'X', 'q', 'n'])
+const CLEAN_LONG = new Set(['--quiet', '--dry-run'])
+
+// The dry run that lists what a git clean would remove. -e keeps its pattern: a pattern left behind once
+// let the closing -n become it, and `git clean -ffdx -e .env` previewed as a forced delete of .env.
+// clean.requireForce is pinned on as well, so an option read wrong makes git refuse rather than delete.
+export function cleanPreview(args: readonly string[]): string[] {
+  const kept: string[] = []
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i]!
+    if (arg === '--') break
+    if (CLEAN_LONG.has(arg) || /^--exclude=./.test(arg)) kept.push(arg)
+    else if (arg === '--exclude' || arg === '-e') {
+      const pattern = args[++i]
+      if (pattern !== undefined) kept.push('-e', pattern)
+    } else if (/^-[A-Za-z]/.test(arg)) {
+      let flags = ''
+      let pattern: string | undefined
+      for (let j = 1; j < arg.length && pattern === undefined; j++) {
+        if (arg[j] === 'e') pattern = arg.slice(j + 1) || args[++i]
+        else if (CLEAN_FLAGS.has(arg[j]!)) flags += arg[j]
+      }
+      if (flags !== '') kept.push(`-${flags}`)
+      if (pattern !== undefined) kept.push('-e', pattern)
+    }
+  }
+  return ['-c', 'clean.requireForce=true', 'clean', ...kept, '-n']
 }
 
 export const isDefaultBranch =(branch: string) => /^(refs\/heads\/)?(main|master)$/.test(branch)

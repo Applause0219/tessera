@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { discards } from '../hooks/guard'
+import { cleanPreview, discards } from '../hooks/guard'
 
 test('finds the git calls that throw away uncommitted work', () => {
   expect(discards('git reset --hard HEAD~1')).toEqual([{ verb: 'reset', args: [] }])
@@ -16,10 +16,26 @@ test('leaves alone the calls that keep the work', () => {
     expect(discards(command)).toEqual([])
 })
 
+test('the clean preview can only list: no force, no interactive, -e keeps its pattern, -n last', () => {
+  const pinned = ['-c', 'clean.requireForce=true', 'clean']
+  // The command that once previewed as `git clean -fdx -e -n`, a forced delete of .env.
+  expect(cleanPreview(discards('git clean -ffdx -e .env')[0]!.args)).toEqual([...pinned, '-dx', '-e', '.env', '-n'])
+  expect(cleanPreview(['-fd'])).toEqual([...pinned, '-d', '-n'])
+  expect(cleanPreview(['-fdf', '-i', '--force', '--forc', '--interactive', '--no-dry-run'])).toEqual([...pinned, '-d', '-n'])
+  expect(cleanPreview(['-fe', '.env', '-x'])).toEqual([...pinned, '-e', '.env', '-x', '-n'])
+  expect(cleanPreview(['-fde.env', '--exclude', 'build', '--exclude=*.log'])).toEqual([...pinned, '-d', '-e', '.env', '-e', 'build', '--exclude=*.log', '-n'])
+  // An -e with nothing after it is dropped, or it would take the closing -n as its pattern.
+  expect(cleanPreview(['-fd', '-e'])).toEqual([...pinned, '-d', '-n'])
+  // Paths narrow the delete; the preview lists the whole tree, which only names more.
+  expect(cleanPreview(['-fd', 'src', '--', 'notes.md'])).toEqual([...pinned, '-d', '-n'])
+})
+
 // git status --porcelain for reset, git diff --name-only for checkout and restore, git clean -n for clean.
+// The clean preview pins a config value first (`-c clean.requireForce=true clean ...`): skip past it.
+const verbAt = (argv: string[]) => (argv[3] === '-c' ? 5 : 3)
 const git = (out: Record<string, string>) => (_: unknown, e: unknown) => {
   const argv = (e as { argv: string[] }).argv
-  return { value: { exitCode: 0, stdout: out[argv[3] ?? ''] ?? '', stderr: '' } } as never
+  return { value: { exitCode: 0, stdout: out[argv[verbAt(argv)] ?? ''] ?? '', stderr: '' } } as never
 }
 
 test('a hard reset over uncommitted changes is refused once, naming them, and goes through when sent again', async ($, on) => {
@@ -53,6 +69,21 @@ test('clean names the untracked files git would remove', async ($, on) => {
   expect((await $.tool.call({ tool: 'Bash', command: 'git clean -fd' })).deny).toContain('untracked files notes.md, tmp/')
 })
 
+test('the clean preview git runs is a dry run that keeps the excluded files out of its list', async ($, on) => {
+  const ran: string[][] = []
+  on('ui.toast', () => ({ value: undefined }))
+  on('session.cwd', () => ({ value: '/w' }))
+  on('clock.now', () => ({ value: 0 }) as never)
+  on('process.run', (_, e) => {
+    const argv = (e as { argv: string[] }).argv
+    ran.push(argv)
+    return { value: { exitCode: 0, stdout: 'Would remove build/\n', stderr: '' } } as never
+  })
+  on('tool.call', { tool: 'Bash' }, () => ({ result: 'done' }) as never)
+  expect((await $.tool.call({ tool: 'Bash', command: 'git clean -ffdx -e .env' })).deny).toContain('untracked files build/')
+  expect(ran).toEqual([['git', '-C', '/w', '-c', 'clean.requireForce=true', 'clean', '-dx', '-e', '.env', '-n']])
+})
+
 test('with stashBeforeDiscard on, the discard sent again stashes the changes first; clean gets no stash', { options: { stashBeforeDiscard: true } }, async ($, on) => {
   const ran: string[] = []
   const toasts: string[] = []
@@ -66,7 +97,8 @@ test('with stashBeforeDiscard on, the discard sent again stashes the changes fir
     const argv = (e as { argv: string[] }).argv
     ran.push(argv.slice(3).join(' '))
     const out: Record<string, string> = { status: ' M src/a.ts\n', 'stash create': 'abc123\n', 'stash store': '', clean: 'Would remove tmp/\n' }
-    return { value: { exitCode: 0, stdout: out[argv.slice(3, 5).join(' ')] ?? out[argv[3] ?? ''] ?? '', stderr: '' } } as never
+    const at = verbAt(argv)
+    return { value: { exitCode: 0, stdout: out[argv.slice(at, at + 2).join(' ')] ?? out[argv[at] ?? ''] ?? '', stderr: '' } } as never
   })
   on('tool.call', { tool: 'Bash' }, () => ({ result: 'ran' }) as never)
   const reset = { tool: 'Bash', command: 'git reset --hard' } as const
